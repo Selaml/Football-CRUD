@@ -40,9 +40,19 @@ export class PlayersService {
       const objectId = validateAndConvertId(id);
       const player = await this.playerModel.findById(objectId).exec();
       if (!player) {
-        throw new NotFoundException(`Player Not found`);
+        throw new NotFoundException(`Player with Not found`);
       }
       return player;
+    } catch (error) {
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async findAllPlayersByIds(ids: string[]): Promise<PlayerDocument[]> {
+    try {
+      const objectIds = ids.map(id => validateAndConvertId(id));
+      const players = await this.playerModel.find({ _id: { $in: objectIds } }).exec();
+      return players;
     } catch (error) {
       throw new BadRequestException(error.message);
     }
