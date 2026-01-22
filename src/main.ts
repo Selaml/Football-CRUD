@@ -4,13 +4,15 @@ import { setupSwagger } from '@config/swagger.config';
 import { ConfigService } from '@nestjs/config';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import helmet from 'helmet';
-
+import cookieParser from 'cookie-parser';
 import { LoggerService } from './core/middlewares/logger.middleware';
 
-import cookieParser from 'cookie-parser';
+import * as bodyParser from 'body-parser';
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-
+  app.use(bodyParser.json({ limit: '50mb' }));
+  app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
   const configService = app.get(ConfigService);
   app.setGlobalPrefix('api/v1');
@@ -19,14 +21,24 @@ async function bootstrap() {
   const httpAdapterHost = app.get(HttpAdapterHost);
   const loggerService = app.get(LoggerService);
 
-  app.useGlobalPipes(new ValidationPipe());
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true, 
+      transform: true, 
+      transformOptions: {
+        enableImplicitConversion: true, 
+      },
+    }),
+  );
+
 
   app.use(helmet());
   app.enableCors();
   setupSwagger(app);
   app.use(cookieParser());
 
-  const port = configService.get<number>('app.port') || 5000;
+  const port = configService.get<number>('app.port') || 3000;
   await app.listen(port);
 }
 bootstrap();

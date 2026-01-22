@@ -14,7 +14,7 @@ export const configuration = () => ({
   },
 
   db: {
-    uri: process.env.DB_URI || `mongodb://${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 27017}/${process.env.DB_NAME || 'nestapp'}`,
+    uri: process.env.DB_URI,
     host: process.env.DB_HOST,
     port: parseInt(process.env.DB_PORT || '27017', 10),
     name: process.env.DB_NAME,
