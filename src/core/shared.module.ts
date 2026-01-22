@@ -1,4 +1,4 @@
-import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
 import { LoggerService } from './middlewares/logger.middleware';
 import { MorganMiddleware } from './middlewares/morgan.middleware';
 import { ConfigModule } from '@nestjs/config';
@@ -10,6 +10,6 @@ import { ConfigModule } from '@nestjs/config';
 })
 export class SharedModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(MorganMiddleware).forRoutes('*');
+    consumer.apply(MorganMiddleware).forRoutes({ path: '*path', method: RequestMethod.ALL });
   }
 }
