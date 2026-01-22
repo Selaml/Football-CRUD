@@ -18,6 +18,7 @@ export class Player extends BaseModel {
 
   @Prop({ required: true, min: 16, max: 50 })
   age: number;
+  
   @Prop({ required: true, trim: true, unique: true, index: true })
   email: string;
 

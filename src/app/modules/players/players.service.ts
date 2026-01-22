@@ -48,6 +48,16 @@ export class PlayersService {
     }
   }
 
+  async findAllPlayersByIds(ids: string[]): Promise<PlayerDocument[]> {
+    try {
+      const objectIds = ids.map(id => validateAndConvertId(id));
+      const players = await this.playerModel.find({ _id: { $in: objectIds } }).exec();
+      return players;
+    } catch (error) {
+      throw new BadRequestException(error.message);
+    }
+  }
+
 
   async updatePlayer(id: string, updatePlayerDto: UpdatePlayerDto): Promise<PlayerDocument> {
     try {
