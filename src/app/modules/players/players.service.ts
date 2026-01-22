@@ -40,7 +40,7 @@ export class PlayersService {
       const objectId = validateAndConvertId(id);
       const player = await this.playerModel.findById(objectId).exec();
       if (!player) {
-        throw new NotFoundException(`Player with Not found`);
+        throw new NotFoundException(`Player Not found`);
       }
       return player;
     } catch (error) {
