@@ -206,55 +206,6 @@ export class TeamPlayersService {
     return teamPlayer;
   }
 
- 
-  async update(id: string, updateTeamPlayerDto: UpdateTeamPlayerDto): Promise<TeamPlayerDocument> {
-    const objectId = validateAndConvertId(id);
-    await this.findOne(id); 
-  
-    if (updateTeamPlayerDto.teamId) {
-      try {
-        await this.teamsService.findOneTeam(updateTeamPlayerDto.teamId);
-      } catch (error) {
-        if (error instanceof NotFoundException) {
-          throw new NotFoundException(`Team with ID "${updateTeamPlayerDto.teamId}" not found`);
-        }
-        throw error;
-      }
-    }
-
-    if (updateTeamPlayerDto.playerId) {
-      try {
-        await this.playersService.findOnePlayer(updateTeamPlayerDto.playerId);
-      } catch (error) {
-        if (error instanceof NotFoundException) {
-          throw new NotFoundException(`Player with ID "${updateTeamPlayerDto.playerId}" not found`);
-        }
-        throw error;
-      }
-    }
-
-    const updateData: any = { ...updateTeamPlayerDto };
-    
-    if (updateTeamPlayerDto.teamId) {
-      updateData.teamId = validateAndConvertId(updateTeamPlayerDto.teamId);
-    }
-    
-    if (updateTeamPlayerDto.playerId) {
-      updateData.playerId = validateAndConvertId(updateTeamPlayerDto.playerId);
-    }
-
-    const updatedTeamPlayer = await this.teamPlayerModel
-      .findByIdAndUpdate(objectId, updateData, { new: true, runValidators: true })
-      .populate('teamId', 'name description')
-      .populate('playerId', 'name number age email')
-      .exec();
-
-    if (!updatedTeamPlayer) {
-      throw new NotFoundException(`Team-player relationship with ID "${id}" not found`);
-    }
-
-    return updatedTeamPlayer;
-  }
 
   async getTeamPlayers(teamId: string): Promise<TeamPlayerDocument[]> {
     const teamObjectId = validateAndConvertId(teamId);
@@ -276,30 +227,4 @@ export class TeamPlayersService {
       .exec();
   }
 
-  async validatePlayersBelongToTeam(
-    teamId: string, 
-    playerIds: string[]
-  ): Promise<boolean> {
-    const teamObjectId = validateAndConvertId(teamId);
-    const playerObjectIds = playerIds
-      .map(id => {
-        try {
-          return validateAndConvertId(id);
-        } catch {
-          return null;
-        }
-      })
-      .filter((id): id is Types.ObjectId => id !== null);
-    
-    if (playerObjectIds.length !== playerIds.length) {
-      return false;
-    }
-    
-    const teamPlayers = await this.teamPlayerModel.find({
-      teamId: teamObjectId,
-      playerId: { $in: playerObjectIds },
-    }).exec();
-
-    return teamPlayers.length === playerIds.length;
-  }
 }
