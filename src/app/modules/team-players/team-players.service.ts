@@ -13,6 +13,7 @@ import { BulkAssignTeamPlayerDto } from './dto/bulk-assign-team-player.dto';
 import { UpdateTeamPlayerDto } from './dto/update-team-player.dto';
 import { TeamsService } from '../teams/teams.service';
 import { PlayersService } from '../players/players.service';
+import { validateAndConvertId } from '@core/utils/validateId';
 
 @Injectable()
 export class TeamPlayersService {
@@ -22,53 +23,19 @@ export class TeamPlayersService {
     private playersService: PlayersService,
   ) {}
 
-  /**
-   * Helper method to validate and convert string ID to ObjectId
-   */
-  private validateAndConvertId(id: string): Types.ObjectId {
-    const sanitizedId = id.trim();
-    
-    if (!Types.ObjectId.isValid(sanitizedId)) {
-      throw new BadRequestException(`Invalid team-player relationship ID format: "${id}"`);
-    }
-    
-    return new Types.ObjectId(sanitizedId);
-  }
-
-  /**
-   * Assign a player to a team (create a new team-player relationship)
-   * Validates:
-   * - Both teamId and playerId exist
-   * - Relationship doesn't already exist (unique constraint)
-   */
   async assignPlayerToTeam(createTeamPlayerDto: CreateTeamPlayerDto): Promise<TeamPlayerDocument> {
+    try {
     const { teamId, playerId } = createTeamPlayerDto;
 
-    // Validate and convert IDs
-    const teamObjectId = this.validateAndConvertId(teamId);
-    const playerObjectId = this.validateAndConvertId(playerId);
+   
+    const teamObjectId = validateAndConvertId(teamId);
+    const playerObjectId = validateAndConvertId(playerId);
 
-    // Validate team exists
-    try {
+    
       await this.teamsService.findOneTeam(teamId);
-    } catch (error) {
-      if (error instanceof NotFoundException) {
-        throw new NotFoundException(`Team with ID "${teamId}" not found`);
-      }
-      throw error;
-    }
-
-    // Validate player exists
-    try {
+      
       await this.playersService.findOnePlayer(playerId);
-    } catch (error) {
-      if (error instanceof NotFoundException) {
-        throw new NotFoundException(`Player with ID "${playerId}" not found`);
-      }
-      throw error;
-    }
-
-    // Check if relationship already exists
+    
     const existingRelationship = await this.teamPlayerModel.findOne({
       teamId: teamObjectId,
       playerId: playerObjectId,
@@ -76,7 +43,7 @@ export class TeamPlayersService {
 
     if (existingRelationship) {
       throw new ConflictException(
-        `Player "${playerId}" is already associated with team "${teamId}"`
+        `Player is already assigned to this team`
       );
     }
 
@@ -86,15 +53,11 @@ export class TeamPlayersService {
     });
 
     return teamPlayer.save();
+  
+  } catch (error) {
+    throw new BadRequestException(error.message);
   }
-
-  /**
-   * Bulk assign multiple players to a team
-   * Validates:
-   * - Team exists
-   * - All players exist
-   * - No duplicate relationships
-   */
+  }
   async bulkAssignPlayersToTeam(
     bulkDto: BulkAssignTeamPlayerDto,
   ): Promise<{
@@ -108,67 +71,50 @@ export class TeamPlayersService {
   }> {
     const { teamId, playerIds } = bulkDto;
   
-    const teamObjectId = this.validateAndConvertId(teamId);
-  
-    // 1️⃣ Ensure team exists
+    const teamObjectId = validateAndConvertId(teamId);
+
     await this.teamsService.findOneTeam(teamId);
   
-    // 2️⃣ Remove duplicates & convert IDs
     const uniquePlayerIds = [...new Set(playerIds)];
     const playerObjectIds = uniquePlayerIds.map(id =>
-      this.validateAndConvertId(id),
+      validateAndConvertId(id),
     );
   
-    // 3️⃣ Validate all players exist by checking each one
-    const playerValidationResults = await Promise.allSettled(
-      uniquePlayerIds.map(id => this.playersService.findOnePlayer(id))
+    const playerIdsStrings = playerObjectIds.map(id => id.toString());
+    const players = await this.playersService.findAllPlayersByIds(playerIdsStrings)
+  
+    const existingPlayersSet = new Set(
+      players.map(p => p._id.toString()),
     );
   
-    const existingPlayersSet = new Set<string>();
-    playerValidationResults.forEach((result, index) => {
-      if (result.status === 'fulfilled') {
-        existingPlayersSet.add(playerObjectIds[index].toString());
-      }
-    });
-  
-    // 4️⃣ Fetch existing team-player relations
-    const existingRelations = await this.teamPlayerModel.find({
-      teamId: teamObjectId,
-      playerId: { $in: playerObjectIds },
-    }).exec();
+    const existingRelations = await this.teamPlayerModel.find(
+      {
+        teamId: teamObjectId,
+        playerId: { $in: playerObjectIds },
+      },
+      { playerId: 1 },
+    );
   
     const alreadyAssignedSet = new Set(
       existingRelations.map(r => r.playerId.toString()),
     );
   
-    const results: Array<{
-      playerId: string;
-      success: boolean;
-      message?: string;
-    }> = [];
-    const bulkInsert: Array<{
-      teamId: Types.ObjectId;
-      playerId: Types.ObjectId;
-    }> = [];
+    const results: { playerId: string; success: boolean; message?: string }[] = [];
+    const bulkInsert: { teamId: Types.ObjectId; playerId: Types.ObjectId }[] = [];
+    
+    for (const playerId of uniquePlayerIds) {
+      const playerObjectId = playerId.toString();
   
-    // 5️⃣ Classify each player
-    for (let i = 0; i < uniquePlayerIds.length; i++) {
-      const playerId = uniquePlayerIds[i];
-      const playerObjectId = playerObjectIds[i];
-      const validationResult = playerValidationResults[i];
-  
-      // Check if player exists
-      if (validationResult.status === 'rejected') {
+      if (!existingPlayersSet.has(playerObjectId)) {
         results.push({
           playerId,
           success: false,
-          message: `Player with ID "${playerId}" not found`,
+          message: `Player not found`,
         });
         continue;
       }
   
-      // Check if already assigned
-      if (alreadyAssignedSet.has(playerObjectId.toString())) {
+      if (alreadyAssignedSet.has(playerObjectId)) {
         results.push({
           playerId,
           success: false,
@@ -177,10 +123,9 @@ export class TeamPlayersService {
         continue;
       }
   
-      // Add to bulk insert
       bulkInsert.push({
         teamId: teamObjectId,
-        playerId: playerObjectId,
+        playerId: new Types.ObjectId(playerObjectId),
       });
   
       results.push({
@@ -189,8 +134,7 @@ export class TeamPlayersService {
       });
     }
   
-    // 6️⃣ Bulk insert new relations
-    if (bulkInsert.length > 0) {
+    if (bulkInsert.length) {
       await this.teamPlayerModel.insertMany(bulkInsert, {
         ordered: false,
       });
@@ -206,66 +150,49 @@ export class TeamPlayersService {
     };
   }
   
-  /**
-   * Remove a player from a team (soft delete the team-player relationship)
-   */
-  async removePlayerFromTeam(createTeamPlayerDto: CreateTeamPlayerDto): Promise<void> {
+
+  findAllteamsAndPlayers(): Promise<TeamPlayerDocument[]> {
+    try {
+      return this.teamPlayerModel.find().populate('teamId', 'name description').populate('playerId', 'name number age email').exec();
+    } catch (error) {
+      throw new BadRequestException(error.message);
+    }
+   
+  }
+
+  async removePlayerFromTeam(
+    createTeamPlayerDto: CreateTeamPlayerDto,
+  ): Promise<{
+    success: boolean;
+    message: string;
+  }> {
     const { teamId, playerId } = createTeamPlayerDto;
-
-    // Validate and convert IDs
-    const teamObjectId = this.validateAndConvertId(teamId);
-    const playerObjectId = this.validateAndConvertId(playerId);
-
-    // Find the relationship
+  
+    const teamObjectId = validateAndConvertId(teamId);
+    const playerObjectId = validateAndConvertId(playerId);
+  
     const relationship = await this.teamPlayerModel.findOne({
       teamId: teamObjectId,
       playerId: playerObjectId,
     });
-
+  
     if (!relationship) {
       throw new NotFoundException(
-        `Player "${playerId}" is not associated with team "${teamId}"`
+        `Player is not associated with the team`,
       );
     }
-
-    // Soft delete the relationship
-    await this.teamPlayerModel.delete({ _id: relationship._id });
+  
+    await this.teamPlayerModel.deleteOne({ _id: relationship._id });
+  
+    return {
+      success: true,
+      message: `Player was successfully removed from the team`,
+    };
   }
+  
 
-  /**
-   * Create a new team-player relationship (alias for assignPlayerToTeam for backward compatibility)
-   */
-  async create(createTeamPlayerDto: CreateTeamPlayerDto): Promise<TeamPlayerDocument> {
-    return this.assignPlayerToTeam(createTeamPlayerDto);
-  }
-
-  /**
-   * Find all team-player relationships
-   * Optionally filter by teamId or playerId
-   */
-  async findAll(teamId?: string, playerId?: string): Promise<TeamPlayerDocument[]> {
-    const query: any = {};
-    
-    if (teamId) {
-      query.teamId = this.validateAndConvertId(teamId);
-    }
-    
-    if (playerId) {
-      query.playerId = this.validateAndConvertId(playerId);
-    }
-
-    return this.teamPlayerModel
-      .find(query)
-      .populate('teamId', 'name description')
-      .populate('playerId', 'name number age email')
-      .exec();
-  }
-
-  /**
-   * Find a team-player relationship by ID
-   */
   async findOne(id: string): Promise<TeamPlayerDocument> {
-    const objectId = this.validateAndConvertId(id);
+    const objectId = validateAndConvertId(id);
     const teamPlayer = await this.teamPlayerModel
       .findById(objectId)
       .populate('teamId', 'name description')
@@ -279,14 +206,11 @@ export class TeamPlayersService {
     return teamPlayer;
   }
 
-  /**
-   * Update a team-player relationship
-   */
+ 
   async update(id: string, updateTeamPlayerDto: UpdateTeamPlayerDto): Promise<TeamPlayerDocument> {
-    const objectId = this.validateAndConvertId(id);
-    await this.findOne(id); // Validate relationship exists
-
-    // Validate team and player if they're being updated
+    const objectId = validateAndConvertId(id);
+    await this.findOne(id); 
+  
     if (updateTeamPlayerDto.teamId) {
       try {
         await this.teamsService.findOneTeam(updateTeamPlayerDto.teamId);
@@ -311,13 +235,12 @@ export class TeamPlayersService {
 
     const updateData: any = { ...updateTeamPlayerDto };
     
-    // Convert string IDs to ObjectIds if provided
     if (updateTeamPlayerDto.teamId) {
-      updateData.teamId = this.validateAndConvertId(updateTeamPlayerDto.teamId);
+      updateData.teamId = validateAndConvertId(updateTeamPlayerDto.teamId);
     }
     
     if (updateTeamPlayerDto.playerId) {
-      updateData.playerId = this.validateAndConvertId(updateTeamPlayerDto.playerId);
+      updateData.playerId = validateAndConvertId(updateTeamPlayerDto.playerId);
     }
 
     const updatedTeamPlayer = await this.teamPlayerModel
@@ -333,99 +256,35 @@ export class TeamPlayersService {
     return updatedTeamPlayer;
   }
 
-  /**
-   * Soft delete a team-player relationship
-   * Validates relationship exists and is not already deleted before soft deletion
-   */
-  async remove(id: string): Promise<void> {
-    const objectId = this.validateAndConvertId(id);
-    const teamPlayer = await this.findOne(id);
-    
-    // Guard: Prevent double delete
-    if (teamPlayer.deletedAt) {
-      throw new BadRequestException(`Team-player relationship with ID "${id}" is already deleted`);
-    }
-    
-    // Use mongoose-delete's delete method for soft delete
-    await this.teamPlayerModel.delete({ _id: objectId });
-  }
-
-  /**
-   * Restore a soft-deleted team-player relationship
-   */
-  async restore(id: string): Promise<TeamPlayerDocument> {
-    const objectId = this.validateAndConvertId(id);
-    const teamPlayer = await this.teamPlayerModel.findOneWithDeleted({ _id: objectId }).exec();
-    
-    if (!teamPlayer) {
-      throw new NotFoundException(`Deleted team-player relationship with ID "${id}" not found`);
-    }
-    
-    if (!teamPlayer.deleted) {
-      throw new BadRequestException(`Team-player relationship with ID "${id}" is not deleted`);
-    }
-    
-    await this.teamPlayerModel.restore({ _id: objectId });
-    
-    return this.findOne(id);
-  }
-
-  /**
-   * Hard delete a team-player relationship (admin only - for cleanup jobs)
-   * WARNING: This permanently deletes the document
-   */
-  async hardDelete(id: string): Promise<void> {
-    const objectId = this.validateAndConvertId(id);
-    await this.findOne(id); // Validate exists
-    await this.teamPlayerModel.deleteOne({ _id: objectId }, { hardDelete: true });
-  }
-
-  /**
-   * Get all players for a specific team
-   */
-  async getTeamPlayers(teamId: string, activeOnly: boolean = false): Promise<TeamPlayerDocument[]> {
-    const teamObjectId = this.validateAndConvertId(teamId);
+  async getTeamPlayers(teamId: string): Promise<TeamPlayerDocument[]> {
+    const teamObjectId = validateAndConvertId(teamId);
     const query: any = { teamId: teamObjectId };
-
-    // Note: activeOnly is kept for future use if isActive field is added to the schema
-    // For now, we just return all non-deleted relationships
-
-    return this.teamPlayerModel
+  return this.teamPlayerModel
       .find(query)
       .populate('playerId', 'name number age email')
       .exec();
   }
 
-  /**
-   * Get all teams for a specific player
-   */
-  async getPlayerTeams(playerId: string, activeOnly: boolean = false): Promise<TeamPlayerDocument[]> {
-    const playerObjectId = this.validateAndConvertId(playerId);
+ 
+  async getPlayerTeams(playerId: string): Promise<TeamPlayerDocument[]> {
+    const playerObjectId = validateAndConvertId(playerId);
     const query: any = { playerId: playerObjectId };
-
-    // Note: activeOnly is kept for future use if isActive field is added to the schema
-    // For now, we just return all non-deleted relationships
-
+ 
     return this.teamPlayerModel
       .find(query)
       .populate('teamId', 'name description')
       .exec();
   }
 
-  /**
-   * Validate that players belong to a team
-   * Used by matches service for lineup validation
-   * Note: Soft-deleted relationships are automatically excluded by mongoose-delete
-   */
   async validatePlayersBelongToTeam(
     teamId: string, 
     playerIds: string[]
   ): Promise<boolean> {
-    const teamObjectId = this.validateAndConvertId(teamId);
+    const teamObjectId = validateAndConvertId(teamId);
     const playerObjectIds = playerIds
       .map(id => {
         try {
-          return this.validateAndConvertId(id);
+          return validateAndConvertId(id);
         } catch {
           return null;
         }
